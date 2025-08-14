@@ -1,4 +1,4 @@
-Usage
+## Usage
 
 ```shell
 # Most useful
@@ -31,3 +31,14 @@ python nqs_map_v3.py --csv "NQS Data Q2 2025.CSV" --out nqs_map_fast.html --fast
 > `Address State`=='VIC' and `Overall Rating`=='Excellent'`
 > `Service Type`.str.contains('Centre-Based', case=False)
 > ```
+
+## TODO
+
+1. cluster style customisation
+2. provider id
+3. explain NQS etc. (link to A...)
+4. legends not shown in fullscreen
+5. starting blocks links
+6. red if report date is too long ago
+7. tel:
+8. google maps link?

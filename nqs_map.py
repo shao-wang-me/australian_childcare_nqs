@@ -214,11 +214,11 @@ def main():
     base_cluster = MarkerCluster(
         name='All services',
         control=False,
-        # options=dict(
-        #     showCoverageOnHover=True,
-        #     spiderfyOnMaxZoom=True,
-        #     disableClusteringAtZoom=14
-        # ),
+        options=dict(
+            showCoverageOnHover=True,
+            spiderfyOnMaxZoom=True,
+            disableClusteringAtZoom=14
+        ),
     ).add_to(m)
 
     def add_rows_to_group(group, rows):
@@ -295,7 +295,7 @@ def main():
 
     folium.plugins.Geocoder().add_to(m)
 
-    folium.plugins.LocateControl(auto_start=True).add_to(m)
+    folium.plugins.LocateControl(auto_start=False).add_to(m)
 
     folium.LayerControl(collapsed=False).add_to(m)
     m.save(args.out)
