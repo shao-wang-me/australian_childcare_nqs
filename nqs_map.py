@@ -5,7 +5,7 @@ import argparse
 import html
 import pandas as pd
 import folium
-from folium.plugins import MarkerCluster, FastMarkerCluster
+from folium.plugins import MarkerCluster, FastMarkerCluster, FeatureGroupSubGroup
 
 # Color map for ratings, including the top "Excellent"
 RATING_COLOR = {
@@ -17,6 +17,7 @@ RATING_COLOR = {
     'Not Rated': 'gray'
 }
 
+# Quality Area labels (English)
 QA_LABELS = {
     'Quality Area 1': 'QA1 Educational program and practice',
     'Quality Area 2': 'QA2 Children’s health and safety',
@@ -39,10 +40,10 @@ def parse_args():
     p.add_argument('--fast-cluster', action='store_true',
                    help='Use FastMarkerCluster (very fast, but no rich HTML popups).')
     p.add_argument('--facets', default='',
-                   help='Comma-separated facets to create layers for: state,rating,type. '
-                        'Example: --facets state,rating')
+                   help='Choose ONE facet to create layers for: state | rating | type. '
+                        'Example: --facets rating')
     p.add_argument('--filter', default='',
-                   help='Optional pandas query filter. Use backticks for columns with spaces.')
+                   help='Optional pandas query filter. Use backticks for column names with spaces.')
     p.add_argument('--export-filtered', default='',
                    help='If set, export the filtered DataFrame to this CSV path.')
     return p.parse_args()
@@ -56,7 +57,6 @@ def build_full_address_cols(df: pd.DataFrame) -> pd.Series:
     postcode = df.get('Postcode', '').fillna('').astype('string').str.strip()
 
     tail = (suburb + ' ' + state + ' ' + postcode).str.replace(r'\s+', ' ', regex=True).str.strip()
-    # Convert empty parts to <NA> and join with ", "
     stacked = pd.concat([a1.replace('', pd.NA),
                          a2.replace('', pd.NA),
                          tail.replace('', pd.NA)], axis=1)
@@ -77,7 +77,7 @@ def main():
     df = pd.read_csv(args.csv, **read_kwargs)
     df.columns = [c.strip() for c in df.columns]
 
-    # Basic required columns
+    # Required columns
     need_cols = {'Latitude', 'Longitude', 'Service Name', 'Overall Rating'}
     missing = [c for c in need_cols if c not in df.columns]
     if missing:
@@ -98,7 +98,7 @@ def main():
     lat = pd.to_numeric(df['Latitude'], errors='coerce')
     lng = pd.to_numeric(df['Longitude'], errors='coerce')
 
-    # Parse Final Report date -> ISO
+    # Parse Final Report date -> ISO string
     if 'Final Report Sent Date' in df.columns:
         rating_date_iso = pd.to_datetime(
             df['Final Report Sent Date'].astype('string').str.strip(),
@@ -135,14 +135,16 @@ def main():
     if df2.empty:
         raise SystemExit('No valid coordinates to plot.')
 
-    # Map base
+    # Base map
     center = [df2['_lat'].mean(), df2['_lng'].mean()]
-    m = folium.Map(location=center, zoom_start=args.zoom, control_scale=True)
+    tile = folium.TileLayer("OpenStreetMap", overlay=True, control=False)
+    m = folium.Map(tiles=tile, location=center, zoom_start=args.zoom, control_scale=True, prefer_canvas=True)
 
-    # Determine facets
+    # Decide on ONE facet (for performance)
     facets = [f.strip().lower() for f in args.facets.split(',') if f.strip()]
     valid_facet_keys = {'state', 'rating', 'type'}
     facets = [f for f in facets if f in valid_facet_keys]
+    facet = facets[0] if facets else ''
 
     # Helper to escape HTML
     def esc(x): return html.escape(str(x)) if pd.notna(x) else ''
@@ -167,7 +169,6 @@ def main():
         aria = esc(r.get('ARIA+', ''))
         max_places = esc(r.get('Maximum total places', ''))
 
-        # QA table
         qa_rows = []
         for qc in qa_cols:
             lab = html.escape(QA_LABELS.get(qc, qc))
@@ -208,67 +209,55 @@ def main():
         </div>
         """
 
-    # Decide clustering strategy
-    # To avoid confusion: cluster bubbles keep the default (count-based) style;
-    # individual markers use rating colors. We also add a legend clarifying this.
-    def add_markers_to_group(group, rows):
-        if args.fast_cluster:
-            pts = rows[['_lat', '_lng']].values.tolist()
-            FastMarkerCluster(pts).add_to(group)
-        else:
-            cluster = MarkerCluster(
-                name=None,
-                show=True,
-                options=dict(
-                    showCoverageOnHover=False,
-                    spiderfyOnMaxZoom=True,
-                    disableClusteringAtZoom=14
-                ),
-            )
-            cluster.add_to(group)
-            for _, r in rows.iterrows():
-                folium.Marker(
-                    location=[float(r['_lat']), float(r['_lng'])],
-                    popup=None if args.fast_cluster else folium.Popup(build_popup(r), max_width=480),
-                    tooltip=esc(r.get('Service Name', '')),
-                    icon=folium.Icon(color=str(r['_marker_color']), icon='info-sign')
-                ).add_to(cluster)
+    # Base cluster to host subgroups (keeps clustering consistent)
+    marker_cluster = FastMarkerCluster if args.fast_cluster else MarkerCluster
+    base_cluster = MarkerCluster(
+        name='All services',
+        control=False,
+        # options=dict(
+        #     showCoverageOnHover=True,
+        #     spiderfyOnMaxZoom=True,
+        #     disableClusteringAtZoom=14
+        # ),
+    ).add_to(m)
 
-    # If no facets specified, put everything into one group
-    if not facets:
-        base = folium.FeatureGroup(name='All services', show=True)
-        base.add_to(m)
-        add_markers_to_group(base, df2)
+    def add_rows_to_group(group, rows):
+        for _, r in rows.iterrows():
+            folium.Marker(
+                location=[float(r['_lat']), float(r['_lng'])],
+                popup=folium.Popup(build_popup(r), max_width=480),
+                tooltip=esc(r.get('Service Name', '')),
+                icon=folium.Icon(color=str(r['_marker_color']), icon='info-sign'),
+                lazy=True
+            ).add_to(group)
+
+    if not facet:
+        # No facets: dump everything into the base cluster
+        add_rows_to_group(base_cluster, df2)
     else:
-        # Build layered toggles; markers may be duplicated across facets by design
-        if 'state' in facets:
-            by_state = folium.FeatureGroup(name='By State / Territory', show=False)
-            by_state.add_to(m)
+        # Build exactly ONE facet dimension for performance
+        if facet == 'state':
             for state_val, rows in df2.groupby('Address State', dropna=False):
-                fg = folium.FeatureGroup(name=f"State: {state_val or 'Unknown'}", show=False)
-                fg.add_to(by_state)
-                add_markers_to_group(fg, rows)
+                subgroup = FeatureGroupSubGroup(base_cluster, name=f"State: {state_val or 'Unknown'}")
+                m.add_child(subgroup)  # must attach subgroups to the map to be toggleable
+                add_rows_to_group(subgroup, rows)
 
-        if 'rating' in facets:
-            by_rating = folium.FeatureGroup(name='By Overall Rating', show=True)
-            by_rating.add_to(m)
-            order = ['Excellent', 'Exceeding NQS', 'Meeting NQS', 'Working Towards NQS',
-                     'Significant Improvement Required', 'Not Rated']
+        elif facet == 'rating':
+            order = ['Excellent', 'Exceeding NQS', 'Meeting NQS',
+                     'Working Towards NQS', 'Significant Improvement Required', 'Not Rated']
             for rating_val in order:
                 rows = df2[df2['_overall'] == rating_val]
                 if rows.empty:
                     continue
-                fg = folium.FeatureGroup(name=f"Rating: {rating_val}", show=(rating_val in ['Excellent','Exceeding NQS','Meeting NQS']))
-                fg.add_to(by_rating)
-                add_markers_to_group(fg, rows)
+                subgroup = FeatureGroupSubGroup(base_cluster, name=f"Rating: {rating_val}")
+                m.add_child(subgroup)
+                add_rows_to_group(subgroup, rows)
 
-        if 'type' in facets:
-            by_type = folium.FeatureGroup(name='By Service Type', show=False)
-            by_type.add_to(m)
+        elif facet == 'type':
             for type_val, rows in df2.groupby('Service Type', dropna=False):
-                fg = folium.FeatureGroup(name=f"Type: {type_val or 'Unknown'}", show=False)
-                fg.add_to(by_type)
-                add_markers_to_group(fg, rows)
+                subgroup = FeatureGroupSubGroup(base_cluster, name=f"Type: {type_val or 'Unknown'}")
+                m.add_child(subgroup)
+                add_rows_to_group(subgroup, rows)
 
     # Fit bounds
     bb = df2[['_lat','_lng']].agg(['min','max'])
@@ -297,7 +286,18 @@ def main():
     """
     m.get_root().html.add_child(folium.Element(legend_html))
 
-    folium.LayerControl(collapsed=True).add_to(m)
+    folium.plugins.Fullscreen(
+        position="topright",
+        title="Expand me",
+        title_cancel="Exit me",
+        force_separate_button=True,
+    ).add_to(m)
+
+    folium.plugins.Geocoder().add_to(m)
+
+    folium.plugins.LocateControl(auto_start=True).add_to(m)
+
+    folium.LayerControl(collapsed=False).add_to(m)
     m.save(args.out)
     print(f'✅ Done. Open: {args.out}')
 
