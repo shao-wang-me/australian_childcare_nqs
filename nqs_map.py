@@ -62,6 +62,37 @@ def build_full_address_cols(df: pd.DataFrame) -> pd.Series:
                          tail.replace('', pd.NA)], axis=1)
     return stacked.apply(lambda r: ', '.join(r.dropna().astype(str)), axis=1).fillna('')
 
+import re
+
+# JavaScript reserved words (ES2015+, simplified list)
+JS_RESERVED_WORDS = {
+    "break", "case", "catch", "class", "const", "continue",
+    "debugger", "default", "delete", "do", "else", "export", "extends",
+    "finally", "for", "function", "if", "import", "in", "instanceof",
+    "new", "return", "super", "switch", "this", "throw", "try", "typeof",
+    "var", "void", "while", "with", "yield", "enum", "await", "implements",
+    "package", "protected", "static", "interface", "private", "public",
+    "null", "true", "false"
+}
+
+def to_js_identifier(s: str) -> str:
+    """Convert a string into a valid JavaScript identifier (ASCII-only)."""
+    if not s:
+        return "_"
+
+    # Replace invalid characters with underscores
+    s = re.sub(r"[^a-zA-Z0-9_$]", "_", s)
+
+    # Ensure the first character is valid
+    if not re.match(r"[a-zA-Z_$]", s[0]):
+        s = "_" + s
+
+    # Avoid reserved words
+    if s in JS_RESERVED_WORDS:
+        s += "_"
+
+    return s
+
 def main():
     args = parse_args()
 
@@ -138,7 +169,9 @@ def main():
     # Base map
     center = [df2['_lat'].mean(), df2['_lng'].mean()]
     tile = folium.TileLayer("OpenStreetMap", overlay=True, control=False)
+    tile._id = 'openstreetmap'
     m = folium.Map(tiles=tile, location=center, zoom_start=args.zoom, control_scale=True, prefer_canvas=True)
+    m._id = 'cc_nqs_map'
 
     # Decide on ONE facet (for performance)
     facets = [f.strip().lower() for f in args.facets.split(',') if f.strip()]
@@ -151,6 +184,13 @@ def main():
 
     # Quality area columns existing in data
     qa_cols = [c for c in QA_LABELS.keys() if c in df2.columns]
+
+    # Get ID for a row
+    def get_row_id(r) -> str:
+        # id = f'{r.get('Provider ID', '')}_{r.get('Service Approval Number', '')}_{r.get('Service Name', '')}_{float(r['_lat'])}_{float(r['_lng'])}'
+        id = f'{r.get('Provider ID', '')}_{r.get('Service Approval Number', '')}'
+        id = to_js_identifier(id)
+        return id
 
     # Build popup HTML for a row
     def build_popup(r) -> str:
@@ -187,7 +227,7 @@ def main():
                 + ''.join(qa_rows) + '</table></div>'
             )
 
-        return f"""
+        popup_html_content = folium.Element(f"""
         <div style="min-width:300px;max-width:440px;font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;">
           <div style="margin-bottom:6px;">
             <div style="font-size:16px;font-weight:600;line-height:1.2;">{service_name}</div>
@@ -209,7 +249,9 @@ def main():
 
           {qa_table}
         </div>
-        """
+        """)
+        popup_html_content._id = f'popup_html_content_{get_row_id(r)}'
+        return popup_html_content
 
     # Base cluster to host subgroups (keeps clustering consistent)
     marker_cluster = FastMarkerCluster if args.fast_cluster else MarkerCluster
@@ -222,16 +264,24 @@ def main():
             disableClusteringAtZoom=14
         ),
     ).add_to(m)
+    base_cluster._id = 'base_cluster'
 
     def add_rows_to_group(group, rows):
         for _, r in rows.iterrows():
-            folium.Marker(
+            id = get_row_id(r)
+            popup = folium.Popup(build_popup(r), max_width=480, lazy=True)
+            popup._id = id
+            popup.html._id = f'popup_html_{id}'
+            icon = folium.Icon(color=str(r['_marker_color']), icon='info-sign')
+            icon._id = id
+            marker = folium.Marker(
                 location=[float(r['_lat']), float(r['_lng'])],
-                popup=folium.Popup(build_popup(r), max_width=480),
+                popup=popup,
                 tooltip=esc(r.get('Service Name', '')),
-                icon=folium.Icon(color=str(r['_marker_color']), icon='info-sign'),
+                icon=icon,
                 lazy=True
             ).add_to(group)
+            marker._id = id
 
     if not facet:
         # No facets: dump everything into the base cluster
@@ -241,6 +291,7 @@ def main():
         if facet == 'state':
             for state_val, rows in df2.groupby('Address State', dropna=False):
                 subgroup = FeatureGroupSubGroup(base_cluster, name=f"State: {state_val or 'Unknown'}")
+                subgroup._id = to_js_identifier(state_val or 'Unknown')
                 m.add_child(subgroup)  # must attach subgroups to the map to be toggleable
                 add_rows_to_group(subgroup, rows)
 
@@ -252,12 +303,14 @@ def main():
                 if rows.empty:
                     continue
                 subgroup = FeatureGroupSubGroup(base_cluster, name=f"Rating: {rating_val}")
+                subgroup._id = to_js_identifier(rating_val)
                 m.add_child(subgroup)
                 add_rows_to_group(subgroup, rows)
 
         elif facet == 'type':
             for type_val, rows in df2.groupby('Service Type', dropna=False):
                 subgroup = FeatureGroupSubGroup(base_cluster, name=f"Type: {type_val or 'Unknown'}")
+                subgroup._id = to_js_identifier(type_val or 'Unknown')
                 m.add_child(subgroup)
                 add_rows_to_group(subgroup, rows)
 
@@ -286,20 +339,26 @@ def main():
       </div>
     </div>
     """
-    m.get_root().html.add_child(folium.Element(legend_html))
+    legend = folium.Element(legend_html)
+    legend._id = 'legend'
+    m.get_root().html.add_child(legend)
 
-    folium.plugins.Fullscreen(
+    fullscreen = folium.plugins.Fullscreen(
         position="topright",
         title="Expand me",
         title_cancel="Exit me",
         force_separate_button=True,
     ).add_to(m)
+    fullscreen._id = 'fullscreen'
 
-    folium.plugins.Geocoder().add_to(m)
+    address_search = folium.plugins.Geocoder().add_to(m)
+    address_search._id = 'address_search'
 
-    folium.plugins.LocateControl(auto_start=False).add_to(m)
+    locate_me = folium.plugins.LocateControl(auto_start=False).add_to(m)
+    locate_me._id = 'locate_me'
 
-    folium.LayerControl(collapsed=False).add_to(m)
+    control = folium.LayerControl(collapsed=False).add_to(m)
+    control._id = 'control'
     m.save(args.out)
     print(f'✅ Done. Open: {args.out}')
 

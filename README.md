@@ -2,7 +2,7 @@
 
 ```shell
 # Most useful
-python .\nqs_map.py --csv '.\NQS Data Q2 2025.CSV' --out nqs_map.html --facets rating --fast-cluster
+python nqs_map.py --csv 'NQS Data Q2 2025.CSV' --out nqs_map.html --facets rating --fast-cluster
 
 # Basic
 python nqs_map_v3.py --csv "NQS Data Q2 2025.CSV" --out nqs_map.html
