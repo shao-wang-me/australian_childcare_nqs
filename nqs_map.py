@@ -155,6 +155,7 @@ def main():
     # Build popup HTML for a row
     def build_popup(r) -> str:
         service_name = esc(r.get('Service Name', ''))
+        provider_id = esc(r.get('Provider ID', ''))
         provider_name = esc(r.get('Provider Name', ''))
         provider_mgmt = esc(r.get('Provider Management Type', ''))
         provider_cnt = esc(r.get('_provider_service_count', ''))
@@ -191,6 +192,7 @@ def main():
           <div style="margin-bottom:6px;">
             <div style="font-size:16px;font-weight:600;line-height:1.2;">{service_name}</div>
             <div style="font-size:12px;color:#555;">Approval: {approval_no}</div>
+            <div style="font-size:12px;color:#555;">Provider: {provider_id}</div>
           </div>
 
           <div style="font-size:13px;line-height:1.35;">
