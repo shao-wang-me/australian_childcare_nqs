@@ -3,3 +3,6 @@ __pycache__/
 *.pyc
 .vscode/
 extra_data/
+docs/index.html
+docs/sitemap.xml
+docs/robots.txt

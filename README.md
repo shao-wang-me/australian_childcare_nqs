@@ -7,7 +7,7 @@ The generated site is published from [`docs/index.html`](/c:/Users/ws/Documents/
 
 ```text
 data/raw/              raw quarterly NQS files added manually
-docs/index.html        published GitHub Pages site
+docs/                  build output directory used for local preview and Pages artifacts
 scripts/build_map.ps1  local build helper
 nqs_map.py             map generator
 requirements.txt       Python dependencies
@@ -39,6 +39,8 @@ This script:
 - looks in `data/raw/`
 - selects the newest `.xlsx`, `.xls`, or `.csv`
 - builds [`docs/index.html`](/c:/Users/ws/Documents/Dev/projects/2025_childcare_nqs/docs/index.html)
+
+The `docs/` output is treated as a build artifact. GitHub Actions rebuilds it during deployment, so the committed source of truth is the raw data plus the build scripts rather than the generated HTML.
 
 Explicit input:
 
@@ -83,6 +85,7 @@ python nqs_map.py --input "data/raw/NQS Data Q4 2025.XLSX" --out "docs/index.htm
 4. Push to `main`, or run the `Deploy GitHub Pages` workflow manually.
 
 The workflow in [`.github/workflows/pages.yml`](/c:/Users/ws/Documents/Dev/projects/2025_childcare_nqs/.github/workflows/pages.yml) runs the same build script and publishes the contents of `docs/`.
+Local builds are useful for previewing changes, but the deployed site is produced again inside GitHub Actions.
 
 For better indexing on a GitHub Pages project site, add this repository variable in `Settings -> Secrets and variables -> Actions -> Variables`:
 
