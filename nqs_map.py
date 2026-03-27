@@ -542,6 +542,15 @@ def main():
     m.fit_bounds([[bb.loc['min','_lat'], bb.loc['min','_lng']],
                   [bb.loc['max','_lat'], bb.loc['max','_lng']]])
 
+    latest_rating_date = ''
+    earliest_rating_date = ''
+    if '_rating_date_iso' in df2.columns:
+        valid_rating_dates = df2['_rating_date_iso'].dropna()
+        valid_rating_dates = valid_rating_dates[valid_rating_dates.ne('')]
+        if not valid_rating_dates.empty:
+            earliest_rating_date = str(valid_rating_dates.min())
+            latest_rating_date = str(valid_rating_dates.max())
+
     # Legend: rating colors + note on clusters
     legend_html = """
     <div style="
@@ -565,6 +574,29 @@ def main():
     legend = folium.Element(legend_html)
     legend._id = 'legend'
     m.get_root().html.add_child(legend)
+
+    source_title = html.escape(source_label)
+    record_count = f"{len(df2):,}"
+    latest_rating_date_text = html.escape(latest_rating_date or 'Unknown')
+    earliest_rating_date_text = html.escape(earliest_rating_date or 'Unknown')
+    source_html = f"""
+    <div style="
+      position: fixed; bottom: 18px; left: 18px; z-index: 9999;
+      background: white; padding: 10px 12px; border: 1px solid #ccc; border-radius: 8px;
+      font-size: 12px; box-shadow: 0 1px 4px rgba(0,0,0,0.15); max-width: 340px;
+    ">
+      <div style="font-weight:700;margin-bottom:6px;">Data source</div>
+      <div style="line-height:1.45;color:#333;">
+        <div><b>Source</b>: ACECQA quarterly NQS data</div>
+        <div><b>Loaded from</b>: {source_title}</div>
+        <div><b>Mapped services</b>: {record_count}</div>
+        <div><b>Rating date range</b>: {earliest_rating_date_text} to {latest_rating_date_text}</div>
+      </div>
+    </div>
+    """
+    source_info = folium.Element(source_html)
+    source_info._id = 'source_info'
+    m.get_root().html.add_child(source_info)
 
     fullscreen = folium.plugins.Fullscreen(
         position="topright",
