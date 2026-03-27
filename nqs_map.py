@@ -3,8 +3,11 @@
 
 import argparse
 import html
+from pathlib import Path
+from typing import Tuple
 import pandas as pd
 import folium
+from branca.element import MacroElement, Template
 from folium.plugins import MarkerCluster, FastMarkerCluster, FeatureGroupSubGroup
 
 # Color map for ratings, including the top "Excellent"
@@ -20,7 +23,7 @@ RATING_COLOR = {
 # Quality Area labels (English)
 QA_LABELS = {
     'Quality Area 1': 'QA1 Educational program and practice',
-    'Quality Area 2': 'QA2 Children’s health and safety',
+    'Quality Area 2': "QA2 Children's health and safety",
     'Quality Area 3': 'QA3 Physical environment',
     'Quality Area 4': 'QA4 Staffing arrangements',
     'Quality Area 5': 'QA5 Relationships with children',
@@ -28,12 +31,108 @@ QA_LABELS = {
     'Quality Area 7': 'QA7 Governance and leadership',
 }
 
+OSM_TILES = "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+OSM_ATTRIBUTION = (
+    '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+)
+CARTO_TILES = "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
+CARTO_ATTRIBUTION = (
+    '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors '
+    '&copy; <a href="https://carto.com/attributions">CARTO</a>'
+)
+DEFAULT_SHEET_CANDIDATES = (
+    'Approved Services',
+    'Q42025data',
+    'Q32025data',
+    'Q22025data',
+    'Q12025data',
+)
+
+
+class TileFallbackControl(MacroElement):
+    """Choose tiles client-side: local files use CARTO, hosted pages prefer OSM."""
+
+    def __init__(self, map_name: str, osm_layer_name: str, carto_layer_name: str):
+        super().__init__()
+        self._name = 'TileFallbackControl'
+        self.map_name = map_name
+        self.osm_layer_name = osm_layer_name
+        self.carto_layer_name = carto_layer_name
+        self._template = Template(
+            """
+            {% macro script(this, kwargs) %}
+            (function() {
+                var map = {{ this.map_name }};
+                var osm = {{ this.osm_layer_name }};
+                var carto = {{ this.carto_layer_name }};
+                var preferOsmTiles = window.location.protocol !== "file:";
+                var osmTileErrorCount = 0;
+                var osmTileLoadedSuccessfully = false;
+                var switchedToCartoFallback = false;
+
+                function switchToCartoFallback() {
+                    if (switchedToCartoFallback) {
+                        return;
+                    }
+
+                    switchedToCartoFallback = true;
+                    if (map.hasLayer(osm)) {
+                        map.removeLayer(osm);
+                    }
+                    if (!map.hasLayer(carto)) {
+                        carto.addTo(map);
+                    }
+                    console.warn("OpenStreetMap tiles unavailable; switched to CARTO fallback.");
+                }
+
+                if (map.hasLayer(carto) && preferOsmTiles) {
+                    map.removeLayer(carto);
+                }
+                if (preferOsmTiles && !map.hasLayer(osm)) {
+                    osm.addTo(map);
+                }
+                if (!preferOsmTiles && !map.hasLayer(carto)) {
+                    carto.addTo(map);
+                }
+
+                osm.on("tileerror", function() {
+                    osmTileErrorCount += 1;
+                    if (!osmTileLoadedSuccessfully || osmTileErrorCount >= 3) {
+                        switchToCartoFallback();
+                    }
+                });
+
+                osm.on("tileload", function() {
+                    osmTileLoadedSuccessfully = true;
+                });
+
+                osm.on("load", function() {
+                    osmTileErrorCount = 0;
+                });
+
+                if (preferOsmTiles) {
+                    window.setTimeout(function() {
+                        if (!osmTileLoadedSuccessfully) {
+                            switchToCartoFallback();
+                        }
+                    }, 4000);
+                }
+            })();
+            {% endmacro %}
+            """
+        )
+
 def parse_args():
     p = argparse.ArgumentParser(
         description='Make an interactive NQS map with layered toggles and filtering.'
     )
-    p.add_argument('--csv', required=True, help='Path to the CSV (National Registers with NQS).')
-    p.add_argument('--out', default='nqs_map.html', help='Output HTML file.')
+    p.add_argument('--input', dest='input_path', default='',
+                   help='Path to the source data file (.csv, .xlsx, .xls).')
+    p.add_argument('--csv', dest='csv_path', default='',
+                   help='Backward-compatible alias for --input.')
+    p.add_argument('--sheet', default='',
+                   help='Worksheet name for Excel inputs. If omitted, the script auto-detects one.')
+    p.add_argument('--out', default='docs/index.html', help='Output HTML file.')
     p.add_argument('--zoom', type=int, default=10, help='Initial zoom level.')
     p.add_argument('--engine', choices=['c', 'pyarrow'], default='c',
                    help='pandas read_csv engine. pyarrow is faster if installed.')
@@ -46,6 +145,8 @@ def parse_args():
                    help='Optional pandas query filter. Use backticks for column names with spaces.')
     p.add_argument('--export-filtered', default='',
                    help='If set, export the filtered DataFrame to this CSV path.')
+    p.add_argument('--export-normalized', default='',
+                   help='If set, export the normalized input table to this CSV path before filtering.')
     return p.parse_args()
 
 def build_full_address_cols(df: pd.DataFrame) -> pd.Series:
@@ -93,26 +194,109 @@ def to_js_identifier(s: str) -> str:
 
     return s
 
-def main():
-    args = parse_args()
 
-    # --- Read CSV as strings to avoid dtype warnings; disable low-memory chunking ---
+def resolve_input_path(args) -> Path:
+    input_path = (args.input_path or args.csv_path or '').strip()
+    if not input_path:
+        raise SystemExit('Provide an input file with --input (or legacy --csv).')
+    path = Path(input_path)
+    if not path.exists():
+        raise SystemExit(f'Input file not found: {path}')
+    return path
+
+
+def read_csv_input(path: Path, engine: str) -> pd.DataFrame:
     read_kwargs = dict(
         dtype='string',
         low_memory=False,
-        na_filter=False,   # keep "Met"/"Not Met" as strings
+        na_filter=False,
         encoding='utf-8'
     )
-    if args.engine == 'pyarrow':
+    if engine == 'pyarrow':
         read_kwargs['engine'] = 'pyarrow'
-    df = pd.read_csv(args.csv, **read_kwargs)
-    df.columns = [c.strip() for c in df.columns]
+    return pd.read_csv(path, **read_kwargs)
+
+
+def choose_excel_sheet(path: Path, requested_sheet: str) -> str:
+    sheet_names = pd.ExcelFile(path).sheet_names
+    if requested_sheet:
+        if requested_sheet not in sheet_names:
+            raise SystemExit(f'Sheet not found in {path.name}: {requested_sheet}')
+        return requested_sheet
+
+    for candidate in DEFAULT_SHEET_CANDIDATES:
+        if candidate in sheet_names:
+            return candidate
+
+    lowered = {name.lower(): name for name in sheet_names}
+    for candidate in ('approved services', 'q42025data', 'q32025data', 'q22025data', 'q12025data'):
+        if candidate in lowered:
+            return lowered[candidate]
+
+    raise SystemExit(
+        'Could not auto-detect a usable Excel sheet. '
+        f'Available sheets: {", ".join(sheet_names)}'
+    )
+
+
+def normalize_column_names(df: pd.DataFrame) -> pd.DataFrame:
+    rename_map = {
+        'ServiceApprovalNumber': 'Service Approval Number',
+        'ServiceName': 'Service Name',
+        'Provider Approval Number': 'Provider ID',
+        'ProviderLegalName': 'Provider Name',
+        'ServiceType': 'Service Type',
+        'ServiceAddress': 'Address Line 1',
+        'Suburb': 'Suburb/Town',
+        'State': 'Address State',
+        'Phone': 'Service phone number',
+        'NumberOfApprovedPlaces': 'Maximum total places',
+        'QualityArea1Rating': 'Quality Area 1',
+        'QualityArea2Rating': 'Quality Area 2',
+        'QualityArea3Rating': 'Quality Area 3',
+        'QualityArea4Rating': 'Quality Area 4',
+        'QualityArea5Rating': 'Quality Area 5',
+        'QualityArea6Rating': 'Quality Area 6',
+        'QualityArea7Rating': 'Quality Area 7',
+        'OverallRating': 'Overall Rating',
+        'RatingsIssued': 'Final Report Sent Date',
+    }
+    df = df.rename(columns=rename_map)
+    df.columns = [str(c).strip() for c in df.columns]
+    return df
+
+
+def load_input_dataframe(path: Path, engine: str, requested_sheet: str) -> Tuple[pd.DataFrame, str]:
+    suffix = path.suffix.lower()
+    if suffix == '.csv':
+        df = read_csv_input(path, engine=engine)
+        source_label = path.name
+    elif suffix in {'.xlsx', '.xls'}:
+        sheet_name = choose_excel_sheet(path, requested_sheet=requested_sheet)
+        df = pd.read_excel(path, sheet_name=sheet_name, dtype='string')
+        source_label = f'{path.name} [{sheet_name}]'
+    else:
+        raise SystemExit(f'Unsupported input type: {path.suffix}')
+
+    df = normalize_column_names(df)
+    return df, source_label
+
+def main():
+    args = parse_args()
+    input_path = resolve_input_path(args)
+    df, source_label = load_input_dataframe(input_path, engine=args.engine, requested_sheet=args.sheet)
+
+    if args.export_normalized:
+        df.to_csv(args.export_normalized, index=False)
 
     # Required columns
     need_cols = {'Latitude', 'Longitude', 'Service Name', 'Overall Rating'}
     missing = [c for c in need_cols if c not in df.columns]
     if missing:
-        raise SystemExit(f'Missing required columns: {missing}')
+        raise SystemExit(
+            f'Missing required columns in {source_label}: {missing}. '
+            'For maps, use an NQS dataset/sheet that includes coordinates.'
+        )
 
     # Optional filter
     if args.filter.strip():
@@ -129,12 +313,23 @@ def main():
     lat = pd.to_numeric(df['Latitude'], errors='coerce')
     lng = pd.to_numeric(df['Longitude'], errors='coerce')
 
-    # Parse Final Report date -> ISO string
+    # Parse Final Report date -> ISO string.
+    # Quarterly CSV exports tend to use day/month/year, while Excel-derived files may
+    # already be ISO-like timestamps. Parse both without emitting format warnings.
     if 'Final Report Sent Date' in df.columns:
-        rating_date_iso = pd.to_datetime(
-            df['Final Report Sent Date'].astype('string').str.strip(),
-            dayfirst=True, errors='coerce'
-        ).dt.date.astype('string')
+        report_dates = df['Final Report Sent Date'].astype('string').str.strip()
+        rating_date = pd.to_datetime(
+            report_dates,
+            format='%d/%m/%Y',
+            errors='coerce'
+        )
+        missing_dates = rating_date.isna()
+        if missing_dates.any():
+            rating_date.loc[missing_dates] = pd.to_datetime(
+                report_dates.loc[missing_dates],
+                errors='coerce'
+            )
+        rating_date_iso = rating_date.dt.date.astype('string')
     else:
         rating_date_iso = pd.Series([''] * len(df), dtype='string')
 
@@ -166,12 +361,40 @@ def main():
     if df2.empty:
         raise SystemExit('No valid coordinates to plot.')
 
-    # Base map
+    # Base map. Start with CARTO active; client-side logic can switch to OSM when appropriate.
     center = [df2['_lat'].mean(), df2['_lng'].mean()]
-    tile = folium.TileLayer("OpenStreetMap", overlay=True, control=False)
-    tile._id = 'openstreetmap'
-    m = folium.Map(tiles=tile, location=center, zoom_start=args.zoom, control_scale=True, prefer_canvas=True)
+    m = folium.Map(
+        tiles=None,
+        location=center,
+        zoom_start=args.zoom,
+        control_scale=True,
+        prefer_canvas=True,
+    )
     m._id = 'cc_nqs_map'
+    carto_tile = folium.TileLayer(
+        tiles=CARTO_TILES,
+        attr=CARTO_ATTRIBUTION,
+        name='CARTO Light',
+        overlay=False,
+        control=True,
+        show=True,
+        subdomains='abcd',
+        detect_retina=True,
+        max_native_zoom=19,
+        max_zoom=19,
+    ).add_to(m)
+    carto_tile._id = 'carto_light'
+    osm_tile = folium.TileLayer(
+        tiles=OSM_TILES,
+        attr=OSM_ATTRIBUTION,
+        name='OpenStreetMap',
+        overlay=False,
+        control=True,
+        show=False,
+        max_native_zoom=19,
+        max_zoom=19,
+    ).add_to(m)
+    osm_tile._id = 'openstreetmap'
 
     # Decide on ONE facet (for performance)
     facets = [f.strip().lower() for f in args.facets.split(',') if f.strip()]
@@ -187,8 +410,8 @@ def main():
 
     # Get ID for a row
     def get_row_id(r) -> str:
-        # id = f'{r.get('Provider ID', '')}_{r.get('Service Approval Number', '')}_{r.get('Service Name', '')}_{float(r['_lat'])}_{float(r['_lng'])}'
-        id = f'{r.get('Provider ID', '')}_{r.get('Service Approval Number', '')}'
+        # Keep ids stable and compact so popup bindings remain predictable in generated JS.
+        id = f"{r.get('Provider ID', '')}_{r.get('Service Approval Number', '')}"
         id = to_js_identifier(id)
         return id
 
@@ -237,14 +460,14 @@ def main():
 
           <div style="font-size:13px;line-height:1.35;">
             <b>Overall rating</b>: {rating_overall}<br>
-            <b>Rating date</b>: {rating_date or '—'}<br>
-            <b>Service type</b>: {service_type or '—'}{(' / ' + service_sub_type) if service_sub_type else ''}<br>
-            <b>Provider</b>: {provider_name or '—'}{f' (services: {provider_cnt})' if provider_cnt else ''}<br>
-            <b>Provider management type</b>: {provider_mgmt or '—'}<br>
-            <b>Phone</b>: {phone or '—'}<br>
-            <b>Address</b>: {addr or '—'}<br>
-            <b>Maximum total places</b>: {max_places or '—'}<br>
-            <b>SEIFA</b>: {seifa or '—'}; <b>ARIA+</b>: {aria or '—'}
+            <b>Rating date</b>: {rating_date or '-'}<br>
+            <b>Service type</b>: {service_type or '-'}{(' / ' + service_sub_type) if service_sub_type else ''}<br>
+            <b>Provider</b>: {provider_name or '-'}{f' (services: {provider_cnt})' if provider_cnt else ''}<br>
+            <b>Provider management type</b>: {provider_mgmt or '-'}<br>
+            <b>Phone</b>: {phone or '-'}<br>
+            <b>Address</b>: {addr or '-'}<br>
+            <b>Maximum total places</b>: {max_places or '-'}<br>
+            <b>SEIFA</b>: {seifa or '-'}; <b>ARIA+</b>: {aria or '-'}
           </div>
 
           {qa_table}
@@ -357,10 +580,13 @@ def main():
     locate_me = folium.plugins.LocateControl(auto_start=False).add_to(m)
     locate_me._id = 'locate_me'
 
+    tile_fallback = TileFallbackControl(m.get_name(), osm_tile.get_name(), carto_tile.get_name())
+    m.add_child(tile_fallback)
+
     control = folium.LayerControl(collapsed=False).add_to(m)
     control._id = 'control'
     m.save(args.out)
-    print(f'✅ Done. Open: {args.out}')
+    print(f'Done. Open: {args.out}')
 
 if __name__ == '__main__':
     main()
