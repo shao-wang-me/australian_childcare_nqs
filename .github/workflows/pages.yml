@@ -27,6 +27,8 @@ jobs:
     runs-on: windows-latest
     environment:
       name: github-pages
+    env:
+      SITE_URL: ${{ vars.SITE_URL }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4

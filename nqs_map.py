@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Tuple
 import pandas as pd
 import folium
-from branca.element import MacroElement, Template
+from branca.element import Element, MacroElement, Template
 from folium.plugins import MarkerCluster, FastMarkerCluster, FeatureGroupSubGroup
 
 # Color map for ratings, including the top "Excellent"
@@ -122,6 +122,13 @@ class TileFallbackControl(MacroElement):
             """
         )
 
+
+def normalize_site_url(site_url: str) -> str:
+    site_url = (site_url or '').strip()
+    if not site_url:
+        return ''
+    return site_url.rstrip('/') + '/'
+
 def parse_args():
     p = argparse.ArgumentParser(
         description='Make an interactive NQS map with layered toggles and filtering.'
@@ -147,6 +154,12 @@ def parse_args():
                    help='If set, export the filtered DataFrame to this CSV path.')
     p.add_argument('--export-normalized', default='',
                    help='If set, export the normalized input table to this CSV path before filtering.')
+    p.add_argument('--site-url', default='',
+                   help='Canonical public URL for the built page, e.g. https://user.github.io/project/.')
+    p.add_argument('--site-title', default='Australian Childcare NQS Map',
+                   help='HTML title and OG title for the generated page.')
+    p.add_argument('--site-description', default='Interactive map of Australian childcare services using quarterly ACECQA NQS data.',
+                   help='Meta description and OG description for the generated page.')
     return p.parse_args()
 
 def build_full_address_cols(df: pd.DataFrame) -> pd.Series:
@@ -281,10 +294,29 @@ def load_input_dataframe(path: Path, engine: str, requested_sheet: str) -> Tuple
     df = normalize_column_names(df)
     return df, source_label
 
+
+def add_seo_metadata(map_obj, site_title: str, site_description: str, site_url: str) -> None:
+    header = map_obj.get_root().header
+    title_text = html.escape(site_title)
+    description_text = html.escape(site_description)
+
+    header.add_child(Element(f'<title>{title_text}</title>'))
+    header.add_child(Element(f'<meta name="description" content="{description_text}">'))
+    header.add_child(Element(f'<meta property="og:title" content="{title_text}">'))
+    header.add_child(Element(f'<meta property="og:description" content="{description_text}">'))
+    header.add_child(Element('<meta property="og:type" content="website">'))
+    header.add_child(Element('<meta name="twitter:card" content="summary">'))
+
+    if site_url:
+        site_url_text = html.escape(site_url, quote=True)
+        header.add_child(Element(f'<link rel="canonical" href="{site_url_text}">'))
+        header.add_child(Element(f'<meta property="og:url" content="{site_url_text}">'))
+
 def main():
     args = parse_args()
     input_path = resolve_input_path(args)
     df, source_label = load_input_dataframe(input_path, engine=args.engine, requested_sheet=args.sheet)
+    site_url = normalize_site_url(args.site_url)
 
     if args.export_normalized:
         df.to_csv(args.export_normalized, index=False)
@@ -371,6 +403,7 @@ def main():
         prefer_canvas=True,
     )
     m._id = 'cc_nqs_map'
+    add_seo_metadata(m, args.site_title, args.site_description, site_url)
     carto_tile = folium.TileLayer(
         tiles=CARTO_TILES,
         attr=CARTO_ATTRIBUTION,

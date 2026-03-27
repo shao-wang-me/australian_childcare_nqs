@@ -84,6 +84,19 @@ python nqs_map.py --input "data/raw/NQS Data Q4 2025.XLSX" --out "docs/index.htm
 
 The workflow in [`.github/workflows/pages.yml`](/c:/Users/ws/Documents/Dev/projects/2025_childcare_nqs/.github/workflows/pages.yml) runs the same build script and publishes the contents of `docs/`.
 
+For better indexing on a GitHub Pages project site, add this repository variable in `Settings -> Secrets and variables -> Actions -> Variables`:
+
+- `SITE_URL`
+  Example: `https://yourusername.github.io/project_name/`
+
+When `SITE_URL` is set, the build also generates:
+
+- `docs/sitemap.xml`
+- `docs/robots.txt`
+- page `title`, `description`, `canonical`, and Open Graph tags
+
+The page title and description are already defined in the project code, so you do not need to configure them in GitHub unless you later decide to make them dynamic.
+
 ## Filter Notes
 
 Pandas query supports backticks around column names with spaces.
