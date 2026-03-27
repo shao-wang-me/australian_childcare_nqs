@@ -1,48 +1,79 @@
-## Usage
+## Overview
 
-```shell
+This project builds a static interactive map of Australian childcare services using quarterly ACECQA NQS data.
+The generated site is published from [`docs/index.html`](/c:/Users/ws/Documents/Dev/projects/2025_childcare_nqs/docs/index.html) and is suitable for GitHub Pages.
+
+## Project Structure
+
+```text
+data/raw/              raw quarterly NQS files added manually
+docs/index.html        published GitHub Pages site
+scripts/build_map.ps1  local build helper
+nqs_map.py             map generator
+requirements.txt       Python dependencies
+```
+
+## Data Source
+
+- Primary source: ACECQA quarterly NQS data workbook, for example `NQS Data Q4 2025.XLSX`
+- Recommended workflow: drop the latest quarterly file into `data/raw/`, then rebuild the map
+- The map page also shows the loaded source file, mapped service count, and rating date range
+
+## Setup
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
+```
 
-# Most useful: build the GitHub Pages site from the latest file in data/raw
-powershell -ExecutionPolicy Bypass -File .\scripts\build_map.ps1
+## Build
 
-# Build directly from a raw quarterly workbook
+Recommended:
+
+```powershell
+.\scripts\build_map.ps1
+```
+
+This script:
+- looks in `data/raw/`
+- selects the newest `.xlsx`, `.xls`, or `.csv`
+- builds [`docs/index.html`](/c:/Users/ws/Documents/Dev/projects/2025_childcare_nqs/docs/index.html)
+
+Explicit input:
+
+```powershell
 python nqs_map.py --input "data/raw/NQS Data Q4 2025.XLSX" --out "docs/index.html" --facets rating
+```
 
-# Explicit Excel sheet
-python nqs_map.py --input "data/raw/NQAITS Quarterly Data Splits (Q3 2013 - Q4 2025).xlsx" --sheet Q42025data --out "docs/index.html"
+Export a normalized CSV snapshot and build the map:
 
-# Export a normalized CSV from the raw Excel before mapping
-python nqs_map.py --input "data/raw/NQS Data Q4 2025.XLSX" --export-normalized normalized_q4_2025.csv --out "docs/index.html"
+```powershell
+python nqs_map.py --input "data/raw/NQS Data Q4 2025.XLSX" --export-normalized "normalized_q4_2025.csv" --out "docs/index.html"
+```
 
-# Filter then export a filtered CSV and map only those records
-python nqs_map.py --input "data/raw/NQS Data Q4 2025.XLSX" --out "docs/vic_exceeding.html" \
-  --filter "`Address State`=='VIC' and `Overall Rating` in ['Exceeding NQS','Excellent']" \
-  --export-filtered filtered_vic_exceeding.csv
+Filter to a smaller map and export the filtered rows:
 
-# When too many points: use fast cluster (no rich popups, best for overview)
+```powershell
+python nqs_map.py --input "data/raw/NQS Data Q4 2025.XLSX" --out "docs/vic_exceeding.html" --filter "`Address State`=='VIC' and `Overall Rating` in ['Exceeding NQS','Excellent']" --export-filtered "filtered_vic_exceeding.csv"
+```
+
+Fast cluster overview:
+
+```powershell
 python nqs_map.py --input "data/raw/NQS Data Q4 2025.XLSX" --out "docs/index.html" --fast-cluster
 ```
 
 ## Notes
 
-- `--input` accepts `.csv`, `.xlsx`, and `.xls`. The legacy `--csv` flag still works.
-- For Excel files, the script auto-detects a suitable sheet such as `Approved Services` or `Q42025data`. Use `--sheet` to override.
-- `--export-normalized` is useful when you want to keep a flat CSV snapshot generated from the original quarterly workbook.
-- `scripts/build_map.ps1` looks in `data/raw/` and uses the newest `.xlsx/.xls/.csv` it finds.
-- The generated map includes both `OpenStreetMap` and `CARTO Light` base layers.
-- Local `file://` opens default to `CARTO Light` because OSM may block requests without a referer.
-- Hosted pages such as GitHub Pages prefer `OpenStreetMap` and automatically fall back to `CARTO Light` if OSM tiles fail.
-- The layer control lets you switch base maps manually at any time.
-
-## Structure
-
-```text
-data/raw/              raw quarterly NQS files you drop in manually
-docs/index.html        published GitHub Pages site
-scripts/build_map.ps1  local build helper
-nqs_map.py             map generator
-```
+- `--input` accepts `.csv`, `.xlsx`, and `.xls`
+- The legacy `--csv` flag still works as an alias for `--input`
+- For Excel files, the script auto-detects a suitable sheet such as `Approved Services`
+- `--sheet` is available if a workbook needs an explicit worksheet name
+- `--export-normalized` writes the normalized input table after column-name cleanup, before filtering and map-only derived columns
+- The generated map includes both `OpenStreetMap` and `CARTO Light` base layers
+- Local `file://` opens default to `CARTO Light` because OSM may block requests without a referer
+- Hosted pages such as GitHub Pages prefer `OpenStreetMap` and automatically fall back to `CARTO Light` if OSM tiles fail
 
 ## GitHub Pages
 
@@ -51,23 +82,25 @@ nqs_map.py             map generator
 3. Set `Source` to `GitHub Actions`.
 4. Push to `main`, or run the `Deploy GitHub Pages` workflow manually.
 
-> Notes on --filter:
-> 
-> Pandas query supports backticks around column names with spaces.
-> Examples:
-> 
-> ```
-> `Address State`=='VIC' and `Overall Rating`=='Excellent'`
-> `Service Type`.str.contains('Centre-Based', case=False)
-> ```
+The workflow in [`.github/workflows/pages.yml`](/c:/Users/ws/Documents/Dev/projects/2025_childcare_nqs/.github/workflows/pages.yml) runs the same build script and publishes the contents of `docs/`.
+
+## Filter Notes
+
+Pandas query supports backticks around column names with spaces.
+
+Examples:
+
+```text
+`Address State`=='VIC' and `Overall Rating`=='Excellent'
+`Service Type`.str.contains('Centre-Based', case=False)
+```
 
 ## TODO
 
-1. cluster style customisation
-2. provider id
-3. explain NQS etc. (link to A...)
-4. legends not shown in fullscreen
-5. starting blocks links
-6. red if report date is too long ago
-7. tel:
-8. google maps link?
+1. Add a short intro panel explaining NQS ratings and what the map is showing.
+2. Improve fullscreen behavior so fixed info cards and legends stay tidy.
+3. Add optional external links in popups, such as Google Maps directions.
+4. Add optional `tel:` links for service phone numbers in popups.
+5. Consider highlighting stale ratings based on `Final Report Sent Date`.
+6. Evaluate whether cluster styling should better reflect rating distribution.
+7. Decide whether to expose provider-level views or keep the project service-focused.
