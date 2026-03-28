@@ -42,6 +42,13 @@ if (-not $SiteDescription) {
     $SiteDescription = "Interactive map of Australian childcare services using quarterly ACECQA NQS data."
 }
 
+$buildRev = ""
+try {
+    $buildRev = (git rev-parse --short HEAD 2>$null).Trim()
+} catch {
+    $buildRev = ""
+}
+
 $args = @(
     "nqs_map.py",
     "--input", $InputPath,
@@ -58,6 +65,10 @@ if ($Sheet) {
 if ($SiteUrl) {
     $SiteUrl = $SiteUrl.TrimEnd('/') + '/'
     $args += @("--site-url", $SiteUrl)
+}
+
+if ($buildRev) {
+    $args += @("--build-rev", $buildRev)
 }
 
 Write-Host "Building map from: $InputPath"

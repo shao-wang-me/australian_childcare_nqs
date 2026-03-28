@@ -4,6 +4,7 @@
 import argparse
 import html
 from pathlib import Path
+from time import perf_counter
 from typing import Tuple
 import pandas as pd
 import folium
@@ -160,6 +161,8 @@ def parse_args():
                    help='HTML title and OG title for the generated page.')
     p.add_argument('--site-description', default='Interactive map of Australian childcare services using quarterly ACECQA NQS data.',
                    help='Meta description and OG description for the generated page.')
+    p.add_argument('--build-rev', default='',
+                   help='Optional build revision label, such as the current git commit.')
     return p.parse_args()
 
 def build_full_address_cols(df: pd.DataFrame) -> pd.Series:
@@ -313,13 +316,24 @@ def add_seo_metadata(map_obj, site_title: str, site_description: str, site_url: 
         header.add_child(Element(f'<meta property="og:url" content="{site_url_text}">'))
 
 def main():
+    t0 = perf_counter()
+    t_last = t0
+
+    def log_stage(label: str) -> None:
+        nonlocal t_last
+        now = perf_counter()
+        print(f'[{label}] {now - t_last:.2f}s')
+        t_last = now
+
     args = parse_args()
     input_path = resolve_input_path(args)
     df, source_label = load_input_dataframe(input_path, engine=args.engine, requested_sheet=args.sheet)
     site_url = normalize_site_url(args.site_url)
+    log_stage('load input')
 
     if args.export_normalized:
         df.to_csv(args.export_normalized, index=False)
+        log_stage('export normalized')
 
     # Required columns
     need_cols = {'Latitude', 'Longitude', 'Service Name', 'Overall Rating'}
@@ -336,6 +350,7 @@ def main():
             df = df.query(args.filter, engine='python')
         except Exception as e:
             raise SystemExit(f'Invalid --filter expression: {e}')
+        log_stage('apply filter')
 
     # Export filtered set if requested
     if args.export_filtered:
@@ -392,6 +407,7 @@ def main():
     df2 = df2[df2['_lat'].notna() & df2['_lng'].notna()]
     if df2.empty:
         raise SystemExit('No valid coordinates to plot.')
+    log_stage('prepare dataframe')
 
     # Base map. Start with CARTO active; client-side logic can switch to OSM when appropriate.
     center = [df2['_lat'].mean(), df2['_lng'].mean()]
@@ -428,6 +444,7 @@ def main():
         max_zoom=19,
     ).add_to(m)
     osm_tile._id = 'openstreetmap'
+    log_stage('init map')
 
     # Decide on ONE facet (for performance)
     facets = [f.strip().lower() for f in args.facets.split(',') if f.strip()]
@@ -569,11 +586,13 @@ def main():
                 subgroup._id = to_js_identifier(type_val or 'Unknown')
                 m.add_child(subgroup)
                 add_rows_to_group(subgroup, rows)
+    log_stage('build markers')
 
     # Fit bounds
     bb = df2[['_lat','_lng']].agg(['min','max'])
     m.fit_bounds([[bb.loc['min','_lat'], bb.loc['min','_lng']],
                   [bb.loc['max','_lat'], bb.loc['max','_lng']]])
+    log_stage('fit bounds')
 
     latest_rating_date = ''
     earliest_rating_date = ''
@@ -584,12 +603,16 @@ def main():
             earliest_rating_date = str(valid_rating_dates.min())
             latest_rating_date = str(valid_rating_dates.max())
 
-    # Legend: rating colors + note on clusters
+    # Legend + data source summary
+    record_count = f"{len(df2):,}"
+    build_rev_text = html.escape(args.build_rev or 'Unknown')
+    data_label = html.escape(input_path.stem.replace('NQS Data ', 'ACECQA ').replace('.XLSX', '').replace('.CSV', ''))
+
     legend_html = """
     <div style="
       position: fixed; bottom: 18px; right: 18px; z-index: 9999;
       background: white; padding: 10px 12px; border: 1px solid #ccc; border-radius: 8px;
-      font-size: 12px; box-shadow: 0 1px 4px rgba(0,0,0,0.15); max-width: 260px;
+      font-size: 12px; box-shadow: 0 1px 4px rgba(0,0,0,0.15); max-width: 310px;
     ">
       <div style="font-weight:700;margin-bottom:6px;">Marker colors by Overall Rating</div>
       <div><span style="display:inline-block;width:10px;height:10px;background:#6f42c1;border:1px solid #4d2f8a;margin-right:6px;"></span>Excellent</div>
@@ -602,34 +625,23 @@ def main():
       <div style="font-size:11px;color:#555;">
         Cluster bubbles use the default count-based style (not rating colors).
       </div>
-    </div>
-    """
-    legend = folium.Element(legend_html)
-    legend._id = 'legend'
-    m.get_root().html.add_child(legend)
-
-    source_title = html.escape(source_label)
-    record_count = f"{len(df2):,}"
-    latest_rating_date_text = html.escape(latest_rating_date or 'Unknown')
-    earliest_rating_date_text = html.escape(earliest_rating_date or 'Unknown')
-    source_html = f"""
-    <div style="
-      position: fixed; bottom: 18px; left: 18px; z-index: 9999;
-      background: white; padding: 10px 12px; border: 1px solid #ccc; border-radius: 8px;
-      font-size: 12px; box-shadow: 0 1px 4px rgba(0,0,0,0.15); max-width: 340px;
-    ">
-      <div style="font-weight:700;margin-bottom:6px;">Data source</div>
-      <div style="line-height:1.45;color:#333;">
-        <div><b>Source</b>: ACECQA quarterly NQS data</div>
-        <div><b>Loaded from</b>: {source_title}</div>
-        <div><b>Mapped services</b>: {record_count}</div>
-        <div><b>Rating date range</b>: {earliest_rating_date_text} to {latest_rating_date_text}</div>
+      <hr style="margin:6px 0;border:none;border-top:1px solid #eee;">
+      <div style="font-weight:700;margin-bottom:4px;">Data source</div>
+      <div style="font-size:11px;line-height:1.45;color:#333;">
+        <div><b>Source</b>: DATA_LABEL</div>
+        <div><b>Services</b>: RECORD_COUNT</div>
+        <div><b>Rev</b>: BUILD_REV</div>
       </div>
     </div>
     """
-    source_info = folium.Element(source_html)
-    source_info._id = 'source_info'
-    m.get_root().html.add_child(source_info)
+    legend_html = (legend_html
+        .replace('DATA_LABEL', data_label)
+        .replace('RECORD_COUNT', record_count)
+        .replace('BUILD_REV', build_rev_text)
+    )
+    legend = folium.Element(legend_html)
+    legend._id = 'legend'
+    m.get_root().html.add_child(legend)
 
     fullscreen = folium.plugins.Fullscreen(
         position="topright",
@@ -642,7 +654,10 @@ def main():
     address_search = folium.plugins.Geocoder().add_to(m)
     address_search._id = 'address_search'
 
-    locate_me = folium.plugins.LocateControl(auto_start=False).add_to(m)
+    locate_me = folium.plugins.LocateControl(
+        auto_start=False,
+        keepCurrentZoomLevel=True
+    ).add_to(m)
     locate_me._id = 'locate_me'
 
     tile_fallback = TileFallbackControl(m.get_name(), osm_tile.get_name(), carto_tile.get_name())
@@ -650,8 +665,12 @@ def main():
 
     control = folium.LayerControl(collapsed=False).add_to(m)
     control._id = 'control'
+    log_stage('finalize controls')
+
     m.save(args.out)
+    log_stage('save html')
     print(f'Done. Open: {args.out}')
+    print(f'[total] {perf_counter() - t0:.2f}s')
 
 if __name__ == '__main__':
     main()
