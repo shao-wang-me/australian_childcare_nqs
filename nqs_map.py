@@ -651,12 +651,14 @@ def main():
     ).add_to(m)
     fullscreen._id = 'fullscreen'
 
-    address_search = folium.plugins.Geocoder().add_to(m)
+    address_search = folium.plugins.Geocoder(
+        placeholder="Search suburb or address..."
+    ).add_to(m)
     address_search._id = 'address_search'
 
     locate_me = folium.plugins.LocateControl(
-        auto_start=False,
-        keepCurrentZoomLevel=True
+        auto_start=True,
+        keepCurrentZoomLevel=False
     ).add_to(m)
     locate_me._id = 'locate_me'
 
