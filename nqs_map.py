@@ -3,8 +3,10 @@
 
 import argparse
 import html
-import pandas as pd
+import re
+
 import folium
+import pandas as pd
 from folium.plugins import MarkerCluster, FastMarkerCluster, FeatureGroupSubGroup
 
 # Color map for ratings, including the top "Excellent"
@@ -38,7 +40,7 @@ def parse_args():
     p.add_argument('--engine', choices=['c', 'pyarrow'], default='c',
                    help='pandas read_csv engine. pyarrow is faster if installed.')
     p.add_argument('--fast-cluster', action='store_true',
-                   help='Use FastMarkerCluster (very fast, but no rich HTML popups).')
+                   help='Use FastMarkerCluster for faster, lighter maps on large datasets.')
     p.add_argument('--facets', default='',
                    help='Choose ONE facet to create layers for: state | rating | type. '
                         'Example: --facets rating')
@@ -61,8 +63,6 @@ def build_full_address_cols(df: pd.DataFrame) -> pd.Series:
                          a2.replace('', pd.NA),
                          tail.replace('', pd.NA)], axis=1)
     return stacked.apply(lambda r: ', '.join(r.dropna().astype(str)), axis=1).fillna('')
-
-import re
 
 # JavaScript reserved words (ES2015+, simplified list)
 JS_RESERVED_WORDS = {
@@ -187,8 +187,8 @@ def main():
 
     # Get ID for a row
     def get_row_id(r) -> str:
-        # id = f'{r.get('Provider ID', '')}_{r.get('Service Approval Number', '')}_{r.get('Service Name', '')}_{float(r['_lat'])}_{float(r['_lng'])}'
-        id = f'{r.get('Provider ID', '')}_{r.get('Service Approval Number', '')}'
+        # Service Approval Number should already be unique, but Provider ID helps avoid collisions.
+        id = f"{r.get('Provider ID', '')}_{r.get('Service Approval Number', '')}"
         id = to_js_identifier(id)
         return id
 
@@ -227,7 +227,7 @@ def main():
                 + ''.join(qa_rows) + '</table></div>'
             )
 
-        popup_html_content = folium.Element(f"""
+        return f"""
         <div style="min-width:300px;max-width:440px;font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;">
           <div style="margin-bottom:6px;">
             <div style="font-size:16px;font-weight:600;line-height:1.2;">{service_name}</div>
@@ -249,22 +249,7 @@ def main():
 
           {qa_table}
         </div>
-        """)
-        popup_html_content._id = f'popup_html_content_{get_row_id(r)}'
-        return popup_html_content
-
-    # Base cluster to host subgroups (keeps clustering consistent)
-    marker_cluster = FastMarkerCluster if args.fast_cluster else MarkerCluster
-    base_cluster = MarkerCluster(
-        name='All services',
-        control=False,
-        options=dict(
-            showCoverageOnHover=True,
-            spiderfyOnMaxZoom=True,
-            disableClusteringAtZoom=14
-        ),
-    ).add_to(m)
-    base_cluster._id = 'base_cluster'
+        """
 
     def add_rows_to_group(group, rows):
         for _, r in rows.iterrows():
@@ -283,36 +268,123 @@ def main():
             ).add_to(group)
             marker._id = id
 
+    def add_fast_cluster(rows: pd.DataFrame, *, name: str, show: bool = True):
+        data = []
+        for _, r in rows.iterrows():
+            data.append([
+                float(r['_lat']),
+                float(r['_lng']),
+                str(r['_marker_color']),
+                str(r.get('Service Name', '')),
+                build_popup(r),
+            ])
+
+        callback = """
+        function (row) {
+            var marker = L.marker(new L.LatLng(row[0], row[1]));
+            marker.setIcon(L.AwesomeMarkers.icon({
+                icon: 'info-sign',
+                prefix: 'glyphicon',
+                markerColor: row[2] || 'gray',
+                iconColor: 'white'
+            }));
+            if (row[3]) {
+                marker.bindTooltip(row[3], {sticky: true});
+            }
+            if (row[4]) {
+                marker.bindPopup(row[4], {maxWidth: 480});
+            }
+            return marker;
+        }
+        """
+
+        cluster = FastMarkerCluster(
+            data=data,
+            callback=callback,
+            name=name,
+            show=show,
+            overlay=True,
+            control=True,
+            options=dict(disableClusteringAtZoom=14),
+        ).add_to(m)
+        cluster._id = to_js_identifier(name)
+        return cluster
+
     if not facet:
-        # No facets: dump everything into the base cluster
-        add_rows_to_group(base_cluster, df2)
+        # No facets: show one cluster layer only.
+        if args.fast_cluster:
+            add_fast_cluster(df2, name='All services', show=True)
+        else:
+            base_cluster = MarkerCluster(
+                name='All services',
+                control=False,
+                options=dict(
+                    showCoverageOnHover=True,
+                    spiderfyOnMaxZoom=True,
+                    disableClusteringAtZoom=14
+                ),
+            ).add_to(m)
+            base_cluster._id = 'base_cluster'
+            add_rows_to_group(base_cluster, df2)
     else:
-        # Build exactly ONE facet dimension for performance
-        if facet == 'state':
-            for state_val, rows in df2.groupby('Address State', dropna=False):
-                subgroup = FeatureGroupSubGroup(base_cluster, name=f"State: {state_val or 'Unknown'}")
-                subgroup._id = to_js_identifier(state_val or 'Unknown')
-                m.add_child(subgroup)  # must attach subgroups to the map to be toggleable
-                add_rows_to_group(subgroup, rows)
+        if args.fast_cluster:
+            # FastMarkerCluster cannot reuse the shared subgroup parent structure, so
+            # each facet becomes its own layer directly on the map.
+            if facet == 'state':
+                for state_val, rows in df2.groupby('Address State', dropna=False):
+                    add_fast_cluster(rows, name=f"State: {state_val or 'Unknown'}", show=False)
 
-        elif facet == 'rating':
-            order = ['Excellent', 'Exceeding NQS', 'Meeting NQS',
-                     'Working Towards NQS', 'Significant Improvement Required', 'Not Rated']
-            for rating_val in order:
-                rows = df2[df2['_overall'] == rating_val]
-                if rows.empty:
-                    continue
-                subgroup = FeatureGroupSubGroup(base_cluster, name=f"Rating: {rating_val}")
-                subgroup._id = to_js_identifier(rating_val)
-                m.add_child(subgroup)
-                add_rows_to_group(subgroup, rows)
+            elif facet == 'rating':
+                order = ['Excellent', 'Exceeding NQS', 'Meeting NQS',
+                         'Working Towards NQS', 'Significant Improvement Required', 'Not Rated']
+                for rating_val in order:
+                    rows = df2[df2['_overall'] == rating_val]
+                    if rows.empty:
+                        continue
+                    add_fast_cluster(rows, name=f"Rating: {rating_val}", show=False)
 
-        elif facet == 'type':
-            for type_val, rows in df2.groupby('Service Type', dropna=False):
-                subgroup = FeatureGroupSubGroup(base_cluster, name=f"Type: {type_val or 'Unknown'}")
-                subgroup._id = to_js_identifier(type_val or 'Unknown')
-                m.add_child(subgroup)
-                add_rows_to_group(subgroup, rows)
+            elif facet == 'type':
+                for type_val, rows in df2.groupby('Service Type', dropna=False):
+                    add_fast_cluster(rows, name=f"Type: {type_val or 'Unknown'}", show=False)
+        else:
+            # Base cluster to host subgroups (keeps clustering consistent)
+            base_cluster = MarkerCluster(
+                name='All services',
+                control=False,
+                options=dict(
+                    showCoverageOnHover=True,
+                    spiderfyOnMaxZoom=True,
+                    disableClusteringAtZoom=14
+                ),
+            ).add_to(m)
+            base_cluster._id = 'base_cluster'
+
+            # Build exactly ONE facet dimension for performance
+            if facet == 'state':
+                for state_val, rows in df2.groupby('Address State', dropna=False):
+                    subgroup = FeatureGroupSubGroup(base_cluster, name=f"State: {state_val or 'Unknown'}")
+                    subgroup._id = to_js_identifier(state_val or 'Unknown')
+                    m.add_child(subgroup)  # must attach subgroups to the map to be toggleable
+                    add_rows_to_group(subgroup, rows)
+
+            elif facet == 'rating':
+                order = ['Excellent', 'Exceeding NQS', 'Meeting NQS',
+                         'Working Towards NQS', 'Significant Improvement Required', 'Not Rated']
+                for rating_val in order:
+                    rows = df2[df2['_overall'] == rating_val]
+                    if rows.empty:
+                        continue
+                    subgroup = FeatureGroupSubGroup(base_cluster, name=f"Rating: {rating_val}")
+                    subgroup._id = to_js_identifier(rating_val)
+                    m.add_child(subgroup)
+                    add_rows_to_group(subgroup, rows)
+
+            elif facet == 'type':
+                for type_val, rows in df2.groupby('Service Type', dropna=False):
+                    subgroup = FeatureGroupSubGroup(base_cluster, name=f"Type: {type_val or 'Unknown'}")
+                    subgroup._id = to_js_identifier(type_val or 'Unknown')
+                    m.add_child(subgroup)
+                    add_rows_to_group(subgroup, rows)
 
     # Fit bounds
     bb = df2[['_lat','_lng']].agg(['min','max'])
