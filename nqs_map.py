@@ -396,6 +396,7 @@ def main():
         if missing_dates.any():
             rating_date.loc[missing_dates] = pd.to_datetime(
                 report_dates.loc[missing_dates],
+                format='mixed',
                 errors='coerce'
             )
         rating_date_iso = rating_date.dt.date.astype('string')
@@ -720,7 +721,9 @@ def main():
     address_search._id = 'address_search'
 
     locate_me = folium.plugins.LocateControl(
-        auto_start=True,
+        # Do not change the initial national view before the user asks for location.
+        # Auto-start is unreliable on file:// previews and when permission is denied.
+        auto_start=False,
         keepCurrentZoomLevel=False
     ).add_to(m)
     locate_me._id = 'locate_me'
