@@ -8,7 +8,7 @@ The generated site is published from [`docs/index.html`](docs/index.html) and is
 ```text
 data/raw/              raw quarterly NQS files added manually
 docs/                  build output directory used for local preview and Pages artifacts
-scripts/build_map.ps1  local build helper
+scripts/build_map.py    cross-platform build helper
 scripts/prepare_data.py data integration helper
 scripts/download_data.py official data downloader
 nqs_map.py             map generator
@@ -57,13 +57,7 @@ large, can change at the source, and the time-series workbook exceeds GitHub's
 single-file limit. The downloader uses temporary files and only replaces an
 existing file after a successful non-empty download.
 
-Recommended:
-
-```powershell
-.\scripts\build_map.ps1
-```
-
-On macOS, Linux or CI, use the cross-platform Python builder:
+Build the map on macOS, Linux, Windows or CI with the cross-platform Python builder:
 
 ```bash
 python scripts/build_map.py
@@ -118,7 +112,7 @@ python nqs_map.py --input "data/raw/NQS Data Q4 2025.XLSX" --out "docs/index.htm
 3. Set `Source` to `GitHub Actions`.
 4. Push to `main`, or run the `Deploy GitHub Pages` workflow manually.
 
-The workflow in [`.github/workflows/pages.yml`](.github/workflows/pages.yml) runs the cross-platform Python build script on Ubuntu and publishes the contents of `docs/`.
+The workflow in [`.github/workflows/pages.yml`](.github/workflows/pages.yml) runs the same Python build script on Ubuntu and publishes the contents of `docs/`.
 Local builds are useful for previewing changes, but the deployed site is produced again inside GitHub Actions.
 
 For better indexing on a GitHub Pages project site, add this repository variable in `Settings -> Secrets and variables -> Actions -> Variables`:

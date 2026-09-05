@@ -11,7 +11,6 @@ on:
       - "docs/**"
       - "nqs_map.py"
       - "requirements.txt"
-      - "scripts/build_map.ps1"
       - "scripts/build_map.py"
 
 permissions:
