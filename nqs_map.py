@@ -813,7 +813,11 @@ def main():
     fullscreen._id = 'fullscreen'
 
     address_search = folium.plugins.Geocoder(
-        placeholder="Search suburb or address..."
+        placeholder="Search Australian suburb or address...",
+        provider_options={
+            # Nominatim otherwise returns same-named places outside Australia.
+            'geocodingQueryParams': {'countrycodes': 'au'},
+        },
     ).add_to(m)
     address_search._id = 'address_search'
 
