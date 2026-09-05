@@ -3,6 +3,7 @@
 
 import argparse
 import html
+import json
 from pathlib import Path
 from time import perf_counter
 from typing import Tuple
@@ -571,6 +572,7 @@ def main():
         ),
     ).add_to(m)
     base_cluster._id = 'base_cluster'
+    list_bindings = []
 
     def add_rows_to_group(group, rows):
         for _, r in rows.iterrows():
@@ -588,6 +590,14 @@ def main():
                 lazy=True
             ).add_to(group)
             marker._id = id
+            list_bindings.append({
+                'name': str(r.get('Service Name', '') or ''),
+                'rating': str(r.get('_overall', 'Not Rated') or 'Not Rated'),
+                'address': str(r.get('_full_address', '') or ''),
+                'lat': float(r['_lat']),
+                'lng': float(r['_lng']),
+                'marker': marker.get_name(),
+            })
 
     if not facet:
         # No facets: dump everything into the base cluster
@@ -620,6 +630,71 @@ def main():
                 m.add_child(subgroup)
                 add_rows_to_group(subgroup, rows)
     log_stage('build markers')
+
+    # Keep the list lightweight: render only services inside the current map
+    # view instead of adding thousands of DOM nodes on the first visit.
+    list_data = json.dumps(list_bindings, ensure_ascii=True).replace('</', '<\\/')
+    list_html = f"""
+    <aside id="service-list" style="
+      position:fixed;top:160px;left:58px;z-index:9998;width:320px;max-height:52vh;
+      overflow:hidden;background:#fff;border:1px solid #ccc;border-radius:8px;
+      box-shadow:0 1px 4px rgba(0,0,0,.15);font:12px system-ui,-apple-system,Segoe UI,Roboto,Arial;
+    ">
+      <div style="padding:9px 11px;border-bottom:1px solid #eee;font-weight:700;">
+        Services in map view <span id="service-list-count" style="font-weight:400;color:#555;"></span>
+      </div>
+      <div id="service-list-items" style="max-height:calc(52vh - 42px);overflow:auto;"></div>
+    </aside>
+    <script>
+    (function() {{
+      var map = {m.get_name()};
+      var services = {list_data};
+      var list = document.getElementById('service-list-items');
+      var count = document.getElementById('service-list-count');
+      var maxRows = 100;
+
+      function renderList() {{
+        var bounds = map.getBounds();
+        var visible = services.filter(function(service) {{
+          return bounds.contains([service.lat, service.lng]);
+        }}).sort(function(a, b) {{
+          return a.name.localeCompare(b.name);
+        }});
+        count.textContent = '(' + visible.length.toLocaleString() + ')';
+        var rows = visible.slice(0, maxRows).map(function(service) {{
+          var item = document.createElement('button');
+          item.type = 'button';
+          item.style.cssText = 'display:block;width:100%;text-align:left;padding:8px 11px;border:0;border-bottom:1px solid #f0f0f0;background:#fff;cursor:pointer;';
+          item.innerHTML = '<div style="font-weight:600;line-height:1.25;">' +
+            service.name.replace(/[&<>]/g, function(c) {{ return {{'&':'&amp;','<':'&lt;','>':'&gt;'}}[c]; }}) +
+            '</div><div style="color:#555;margin-top:2px;">' + service.rating +
+            (service.address ? ' · ' + service.address : '') + '</div>';
+          item.addEventListener('click', function() {{
+            var marker = window[service.marker];
+            if (marker) {{
+              map.setView([service.lat, service.lng], Math.max(map.getZoom(), 14));
+              marker.openPopup();
+            }}
+          }});
+          return item;
+        }});
+        list.replaceChildren.apply(list, rows);
+        if (visible.length > maxRows) {{
+          var note = document.createElement('div');
+          note.style.cssText = 'padding:8px 11px;color:#555;border-top:1px solid #eee;';
+          note.textContent = 'Showing first ' + maxRows + '. Zoom in to narrow the results.';
+          list.appendChild(note);
+        }}
+      }}
+
+      map.on('moveend zoomend', renderList);
+      renderList();
+    }})();
+    </script>
+    """
+    list_panel = folium.Element(list_html)
+    list_panel._id = 'service-list-panel'
+    m.get_root().html.add_child(list_panel)
 
     # Fit bounds
     bb = df2[['_lat','_lng']].agg(['min','max'])
