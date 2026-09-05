@@ -634,16 +634,23 @@ def main():
     # Keep the list lightweight: render only services inside the current map
     # view instead of adding thousands of DOM nodes on the first visit.
     list_data = json.dumps(list_bindings, ensure_ascii=True).replace('</', '<\\/')
+    initial_rows = ''.join(
+        f'<div style="padding:8px 11px;border-bottom:1px solid #f0f0f0;">'
+        f'<div style="font-weight:600;line-height:1.25;">{html.escape(item["name"])}</div>'
+        f'<div style="color:#555;margin-top:2px;">{html.escape(item["rating"])}'
+        f'{" · " + html.escape(item["address"]) if item["address"] else ""}</div></div>'
+        for item in list_bindings[:100]
+    )
     list_html = f"""
     <aside id="service-list" style="
-      position:fixed;top:160px;left:58px;z-index:9998;width:320px;max-height:52vh;
+      position:fixed;top:420px;left:58px;z-index:10000;width:320px;max-height:42vh;
       overflow:hidden;background:#fff;border:1px solid #ccc;border-radius:8px;
       box-shadow:0 1px 4px rgba(0,0,0,.15);font:12px system-ui,-apple-system,Segoe UI,Roboto,Arial;
     ">
       <div style="padding:9px 11px;border-bottom:1px solid #eee;font-weight:700;">
         Services in map view <span id="service-list-count" style="font-weight:400;color:#555;"></span>
       </div>
-      <div id="service-list-items" style="max-height:calc(52vh - 42px);overflow:auto;"></div>
+      <div id="service-list-items" style="max-height:calc(42vh - 42px);overflow:auto;">{initial_rows}</div>
     </aside>
     <script>
     (function() {{
@@ -702,9 +709,14 @@ def main():
     }})();
     </script>
     """
-    list_panel = folium.Element(list_html)
+    list_markup, list_script = list_html.split('<script>', 1)
+    list_script = list_script.rsplit('</script>', 1)[0]
+    list_panel = folium.Element(list_markup)
     list_panel._id = 'service-list-panel'
     m.get_root().html.add_child(list_panel)
+    # Folium writes map and marker initialisation after the body. Append the
+    # list script to the root script block so the map object already exists.
+    m.get_root().script.add_child(folium.Element(list_script))
 
     # Fit bounds
     bb = df2[['_lat','_lng']].agg(['min','max'])
