@@ -86,3 +86,41 @@ StartingBlocks. Prioritise:
 Review this document when a new comparable site or official data source is
 found. Do not copy private, sponsored or user-generated data without checking
 its provenance and terms.
+
+## Product recommendations from the comparison
+
+The product should evolve from a marker map into a childcare service finder
+with a map at its centre.
+
+### First screen
+
+- Put service, suburb and postcode search above the map
+- Provide a synchronised list and map view
+- Support current location, rating, service type, state and operating-status
+  filters
+- Keep the initial view focused on a useful local area rather than the whole
+  country
+
+### Service detail
+
+Treat a service detail view as a decision card rather than a data dump. Show
+the service name, current rating, rating date, address, operating status,
+service type, phone, places and provider first. Put QA1-QA7, rating history,
+provider services and source notes below the summary.
+
+### Product direction
+
+Use StartingBlocks as the reference for the parent workflow: find, filter,
+compare, shortlist and contact. Use independent products for interaction
+patterns such as Cards/Table/Map views, data freshness notices and operating
+status filters. Keep this project's differentiator as transparent data:
+rating history, QA-level detail, source dates and explicit handling of missing
+addresses, missing ratings and approximate locations.
+
+### Delivery order
+
+1. Map and list views with shared search and filters
+2. Decision-oriented service details
+3. Compare, shortlist and shareable URLs
+4. Fees, vacancies, inclusions and session types
+5. Guided service finder and Child Care Subsidy link
