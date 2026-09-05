@@ -60,12 +60,16 @@ def download(source: dict, output_dir: Path) -> Path:
 def main() -> None:
     args = parse_args()
     selected = SOURCES if args.source == 'all' else {args.source: SOURCES[args.source]}
+    failures = []
     for name, source in selected.items():
         try:
             path = download(source, args.output_dir)
             print(f'{name}: {path}')
         except Exception as error:
-            raise SystemExit(f'{name}: download failed: {error}') from error
+            print(f'{name}: download failed: {error}')
+            failures.append(name)
+    if failures:
+        raise SystemExit(f'failed sources: {", ".join(failures)}')
 
 
 if __name__ == '__main__':
