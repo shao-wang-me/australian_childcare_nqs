@@ -1,7 +1,7 @@
 ## Overview
 
 This project builds a static interactive map of Australian childcare services using quarterly ACECQA NQS data.
-The generated site is published from [`docs/index.html`](/c:/Users/ws/Documents/Dev/projects/2025_childcare_nqs/docs/index.html) and is suitable for GitHub Pages.
+The generated site is published from [`docs/index.html`](docs/index.html) and is suitable for GitHub Pages.
 
 ## Project Structure
 
@@ -63,10 +63,16 @@ Recommended:
 .\scripts\build_map.ps1
 ```
 
+On macOS, Linux or CI, use the cross-platform Python builder:
+
+```bash
+python scripts/build_map.py
+```
+
 This script:
 - looks in `data/raw/`
 - selects the newest `.xlsx`, `.xls`, or `.csv`
-- builds [`docs/index.html`](/c:/Users/ws/Documents/Dev/projects/2025_childcare_nqs/docs/index.html)
+- builds [`docs/index.html`](docs/index.html)
 
 The `docs/` output is treated as a build artifact. GitHub Actions rebuilds it during deployment, so the committed source of truth is the raw data plus the build scripts rather than the generated HTML.
 
@@ -112,7 +118,7 @@ python nqs_map.py --input "data/raw/NQS Data Q4 2025.XLSX" --out "docs/index.htm
 3. Set `Source` to `GitHub Actions`.
 4. Push to `main`, or run the `Deploy GitHub Pages` workflow manually.
 
-The workflow in [`.github/workflows/pages.yml`](/c:/Users/ws/Documents/Dev/projects/2025_childcare_nqs/.github/workflows/pages.yml) runs the same build script and publishes the contents of `docs/`.
+The workflow in [`.github/workflows/pages.yml`](.github/workflows/pages.yml) runs the cross-platform Python build script on Ubuntu and publishes the contents of `docs/`.
 Local builds are useful for previewing changes, but the deployed site is produced again inside GitHub Actions.
 
 For better indexing on a GitHub Pages project site, add this repository variable in `Settings -> Secrets and variables -> Actions -> Variables`:
