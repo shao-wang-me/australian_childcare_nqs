@@ -99,6 +99,12 @@ def build_current(registers: pd.DataFrame, nqs: pd.DataFrame) -> pd.DataFrame:
         output[f'Quality Area {number}'] = choose_register_value(merged, f'Quality Area {number}', f'QualityArea{number}Rating')
     output['Latitude'] = pd.to_numeric(choose_register_value(merged, 'Latitude'), errors='coerce')
     output['Longitude'] = pd.to_numeric(choose_register_value(merged, 'Longitude'), errors='coerce')
+    valid_coordinates = (
+        output['Latitude'].between(-90, 90)
+        & output['Longitude'].between(-180, 180)
+        & ~((output['Latitude'] == 0) & (output['Longitude'] == 0))
+    )
+    output['Location Status'] = valid_coordinates.map({True: 'available', False: 'unavailable'})
 
     output = output[output['Service Approval Number'].astype('string').str.strip().ne('')]
     output = output.drop_duplicates('Service Approval Number', keep='last')

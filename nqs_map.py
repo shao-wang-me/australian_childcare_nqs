@@ -665,6 +665,7 @@ def main():
 
     # Legend + data source summary
     record_count = f"{len(df2):,}"
+    omitted_count = invalid_coord_count
     build_rev_text = html.escape(args.build_rev or 'Unknown')
     data_label = html.escape(input_path.stem.replace('NQS Data ', 'ACECQA ').replace('.XLSX', '').replace('.CSV', ''))
 
@@ -690,6 +691,7 @@ def main():
       <div style="font-size:11px;line-height:1.45;color:#333;">
         <div><b>Source</b>: DATA_LABEL</div>
         <div><b>Services</b>: RECORD_COUNT</div>
+        <div><b>Not mapped</b>: OMITTED_COUNT</div>
         <div><b>Rev</b>: BUILD_REV</div>
       </div>
     </div>
@@ -697,6 +699,7 @@ def main():
     legend_html = (legend_html
         .replace('DATA_LABEL', data_label)
         .replace('RECORD_COUNT', record_count)
+        .replace('OMITTED_COUNT', f'{omitted_count:,}')
         .replace('BUILD_REV', build_rev_text)
     )
     legend = folium.Element(legend_html)
