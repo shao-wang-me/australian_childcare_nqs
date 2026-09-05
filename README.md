@@ -74,8 +74,8 @@ python nqs_map.py --input "data/raw/NQS Data Q4 2025.XLSX" --out "docs/index.htm
 - `--sheet` is available if a workbook needs an explicit worksheet name
 - `--export-normalized` writes the normalized input table after column-name cleanup, before filtering and map-only derived columns
 - The generated map includes both `OpenStreetMap` and `CARTO Light` base layers
-- Local `file://` opens default to `CARTO Light` because OSM may block requests without a referer
-- Hosted pages such as GitHub Pages prefer `OpenStreetMap` and automatically fall back to `CARTO Light` if OSM tiles fail
+- `OpenStreetMap` is the default because it does not require a CARTO API key
+- Hosted pages and local `file://` previews automatically fall back to `CARTO Light` if OSM tiles fail
 
 ## GitHub Pages
 

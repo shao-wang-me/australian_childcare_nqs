@@ -2,6 +2,7 @@
 __pycache__/
 *.pyc
 .vscode/
+.jira/
 extra_data/
 docs/index.html
 docs/sitemap.xml

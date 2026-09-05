@@ -51,7 +51,7 @@ DEFAULT_SHEET_CANDIDATES = (
 
 
 class TileFallbackControl(MacroElement):
-    """Choose tiles client-side: local files use CARTO, hosted pages prefer OSM."""
+    """Use OSM by default; retain CARTO as a client-side fallback."""
 
     def __init__(self, map_name: str, osm_layer_name: str, carto_layer_name: str):
         super().__init__()
@@ -66,7 +66,9 @@ class TileFallbackControl(MacroElement):
                 var map = {{ this.map_name }};
                 var osm = {{ this.osm_layer_name }};
                 var carto = {{ this.carto_layer_name }};
-                var preferOsmTiles = window.location.protocol !== "file:";
+                // CARTO's public tile endpoint can require an API key. OSM is the
+                // no-key default for both local previews and hosted pages.
+                var preferOsmTiles = true;
                 var osmTileErrorCount = 0;
                 var osmTileLoadedSuccessfully = false;
                 var switchedToCartoFallback = false;
@@ -240,17 +242,32 @@ def choose_excel_sheet(path: Path, requested_sheet: str) -> str:
             raise SystemExit(f'Sheet not found in {path.name}: {requested_sheet}')
         return requested_sheet
 
-    for candidate in DEFAULT_SHEET_CANDIDATES:
-        if candidate in sheet_names:
-            return candidate
-
+    # Prefer the official service-table names, but validate the schema so a
+    # workbook rename or a metadata sheet with a similar name cannot be selected.
+    preferred = [name for name in DEFAULT_SHEET_CANDIDATES if name in sheet_names]
     lowered = {name.lower(): name for name in sheet_names}
     for candidate in ('approved services', 'q42025data', 'q32025data', 'q22025data', 'q12025data'):
-        if candidate in lowered:
-            return lowered[candidate]
+        if candidate in lowered and lowered[candidate] not in preferred:
+            preferred.append(lowered[candidate])
+
+    def has_service_schema(sheet_name: str) -> bool:
+        columns = pd.read_excel(path, sheet_name=sheet_name, nrows=0).columns
+        normalised = {str(column).strip() for column in columns}
+        return {'Service Name', 'Latitude', 'Longitude', 'Overall Rating'} <= normalised or {
+            'ServiceName', 'Latitude', 'Longitude', 'OverallRating'
+        } <= normalised
+
+    for candidate in preferred:
+        if has_service_schema(candidate):
+            return candidate
+
+    for candidate in sheet_names:
+        if has_service_schema(candidate):
+            return candidate
 
     raise SystemExit(
-        'Could not auto-detect a usable Excel sheet. '
+        'Could not auto-detect a service-level Excel sheet with service name, '
+        'coordinates, and overall rating columns. '
         f'Available sheets: {", ".join(sheet_names)}'
     )
 
@@ -404,12 +421,22 @@ def main():
         _rating_date_iso=rating_date_iso,
         _provider_service_count=provider_service_count
     )
-    df2 = df2[df2['_lat'].notna() & df2['_lng'].notna()]
+    valid_coords = (
+        df2['_lat'].notna()
+        & df2['_lng'].notna()
+        & df2['_lat'].between(-90, 90)
+        & df2['_lng'].between(-180, 180)
+        & ~((df2['_lat'] == 0) & (df2['_lng'] == 0))
+    )
+    invalid_coord_count = int((~valid_coords).sum())
+    df2 = df2[valid_coords]
     if df2.empty:
         raise SystemExit('No valid coordinates to plot.')
+    if invalid_coord_count:
+        print(f'[prepare dataframe] dropped {invalid_coord_count:,} rows with missing or invalid coordinates')
     log_stage('prepare dataframe')
 
-    # Base map. Start with CARTO active; client-side logic can switch to OSM when appropriate.
+    # Base map. Start with OSM; client-side logic can switch to CARTO if OSM fails.
     center = [df2['_lat'].mean(), df2['_lng'].mean()]
     m = folium.Map(
         tiles=None,
@@ -420,30 +447,30 @@ def main():
     )
     m._id = 'cc_nqs_map'
     add_seo_metadata(m, args.site_title, args.site_description, site_url)
-    carto_tile = folium.TileLayer(
-        tiles=CARTO_TILES,
-        attr=CARTO_ATTRIBUTION,
-        name='CARTO Light',
-        overlay=False,
-        control=True,
-        show=True,
-        subdomains='abcd',
-        detect_retina=True,
-        max_native_zoom=19,
-        max_zoom=19,
-    ).add_to(m)
-    carto_tile._id = 'carto_light'
     osm_tile = folium.TileLayer(
         tiles=OSM_TILES,
         attr=OSM_ATTRIBUTION,
         name='OpenStreetMap',
         overlay=False,
         control=True,
-        show=False,
+        show=True,
         max_native_zoom=19,
         max_zoom=19,
     ).add_to(m)
     osm_tile._id = 'openstreetmap'
+    carto_tile = folium.TileLayer(
+        tiles=CARTO_TILES,
+        attr=CARTO_ATTRIBUTION,
+        name='CARTO Light',
+        overlay=False,
+        control=True,
+        show=False,
+        subdomains='abcd',
+        detect_retina=True,
+        max_native_zoom=19,
+        max_zoom=19,
+    ).add_to(m)
+    carto_tile._id = 'carto_light'
     log_stage('init map')
 
     # Decide on ONE facet (for performance)
@@ -602,6 +629,34 @@ def main():
         if not valid_rating_dates.empty:
             earliest_rating_date = str(valid_rating_dates.min())
             latest_rating_date = str(valid_rating_dates.max())
+
+    # Keep the first-visit explanation close to the map without hiding the map itself.
+    info_source = html.escape(source_label)
+    info_dates = 'Not available'
+    if earliest_rating_date and latest_rating_date:
+        info_dates = earliest_rating_date if earliest_rating_date == latest_rating_date else f'{earliest_rating_date} to {latest_rating_date}'
+    info_html = f"""
+    <details open style="
+      position: fixed; top: 18px; left: 58px; z-index: 9999;
+      background: white; padding: 10px 12px; border: 1px solid #ccc; border-radius: 8px;
+      font-size: 12px; box-shadow: 0 1px 4px rgba(0,0,0,0.15); max-width: 320px;
+    ">
+      <summary style="cursor:pointer;font-weight:700;">Australian Childcare NQS Map</summary>
+      <div style="margin-top:7px;line-height:1.45;color:#333;">
+        Explore approved Australian childcare services by their latest available NQS rating.
+        Select a marker for service details. NQS ratings describe the quality area outcome recorded by ACECQA;
+        they are not a ranking or a guarantee of availability.
+      </div>
+      <div style="margin-top:7px;font-size:11px;line-height:1.45;color:#555;">
+        <div><b>Data source</b>: {info_source}</div>
+        <div><b>Rating dates</b>: {html.escape(info_dates)}</div>
+        <div><b>Services shown</b>: {len(df2):,}</div>
+      </div>
+    </details>
+    """
+    info_panel = folium.Element(info_html)
+    info_panel._id = 'product-info'
+    m.get_root().html.add_child(info_panel)
 
     # Legend + data source summary
     record_count = f"{len(df2):,}"
