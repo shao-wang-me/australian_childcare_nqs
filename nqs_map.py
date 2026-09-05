@@ -647,13 +647,20 @@ def main():
     </aside>
     <script>
     (function() {{
-      var map = {m.get_name()};
+      var mapName = '{m.get_name()}';
       var services = {list_data};
       var list = document.getElementById('service-list-items');
       var count = document.getElementById('service-list-count');
       var maxRows = 100;
 
-      function renderList() {{
+      function initList() {{
+        var map = window[mapName];
+        if (!map) {{
+          window.setTimeout(initList, 0);
+          return;
+        }}
+
+        function renderList() {{
         var bounds = map.getBounds();
         var visible = services.filter(function(service) {{
           return bounds.contains([service.lat, service.lng]);
@@ -685,10 +692,13 @@ def main():
           note.textContent = 'Showing first ' + maxRows + '. Zoom in to narrow the results.';
           list.appendChild(note);
         }}
+        }}
+
+        map.on('moveend zoomend', renderList);
+        renderList();
       }}
 
-      map.on('moveend zoomend', renderList);
-      renderList();
+      initList();
     }})();
     </script>
     """
