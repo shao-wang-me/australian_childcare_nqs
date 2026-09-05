@@ -169,11 +169,16 @@ def parse_args():
 
 def build_full_address_cols(df: pd.DataFrame) -> pd.Series:
     """Vectorised address concatenation."""
-    a1 = df.get('Address Line 1', '').fillna('').astype('string').str.strip()
-    a2 = df.get('Address Line 2', '').fillna('').astype('string').str.strip()
-    suburb = df.get('Suburb/Town', '').fillna('').astype('string').str.strip()
-    state = df.get('Address State', '').fillna('').astype('string').str.strip()
-    postcode = df.get('Postcode', '').fillna('').astype('string').str.strip()
+    def text_column(name: str) -> pd.Series:
+        if name not in df:
+            return pd.Series('', index=df.index, dtype='string')
+        return df[name].fillna('').astype('string').str.strip()
+
+    a1 = text_column('Address Line 1')
+    a2 = text_column('Address Line 2')
+    suburb = text_column('Suburb/Town')
+    state = text_column('Address State')
+    postcode = text_column('Postcode')
 
     tail = (suburb + ' ' + state + ' ' + postcode).str.replace(r'\s+', ' ', regex=True).str.strip()
     stacked = pd.concat([a1.replace('', pd.NA),

@@ -4,6 +4,10 @@ __pycache__/
 .vscode/
 .jira/
 extra_data/
+data/processed/
+data/raw/Education-services-au-export.csv
+data/raw/NQS Data Q2 2026.XLSX
+data/raw/NQS time series Q3 2013-Q2 2026.XLSX
 docs/index.html
 docs/sitemap.xml
 docs/robots.txt

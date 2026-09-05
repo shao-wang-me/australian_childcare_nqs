@@ -9,6 +9,8 @@ The generated site is published from [`docs/index.html`](/c:/Users/ws/Documents/
 data/raw/              raw quarterly NQS files added manually
 docs/                  build output directory used for local preview and Pages artifacts
 scripts/build_map.ps1  local build helper
+scripts/prepare_data.py data integration helper
+scripts/download_data.py official data downloader
 nqs_map.py             map generator
 requirements.txt       Python dependencies
 ```
@@ -28,6 +30,32 @@ pip install -r requirements.txt
 ```
 
 ## Build
+
+Prepare a current service dataset and rating history from ACECQA exports:
+
+```powershell
+python scripts/prepare_data.py `
+  --registers "data/raw/Education-services-au-export.csv" `
+  --nqs-timeseries "data/raw/NQS time series Q3 2013-Q2 2026.XLSX" `
+  --out-current "data/processed/current_services.csv" `
+  --out-history "data/processed/rating_history.csv"
+```
+
+The current dataset uses National Registers for current service details and
+status, and the latest quarterly sheet from the NQS time-series workbook for
+coordinates and ratings. The history output keeps one rating row per service
+and quarter.
+
+Download the official source files into `data/raw/`:
+
+```powershell
+python scripts/download_data.py
+```
+
+The raw files are deliberately not part of the normal code commit. They are
+large, can change at the source, and the time-series workbook exceeds GitHub's
+single-file limit. The downloader uses temporary files and only replaces an
+existing file after a successful non-empty download.
 
 Recommended:
 
